@@ -1,0 +1,6 @@
+name = Import Instagram Nodes
+description = Provide a Instagram ID and Import
+core = 7.x
+package = Custom
+dependencies[] = libraries
+configure = admin/config/instagram-importer

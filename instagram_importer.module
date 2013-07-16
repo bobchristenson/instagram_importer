@@ -1,0 +1,124 @@
+<?php
+
+//fire all this during user login
+function instagram_importer_user_login(&$edit, $account) {
+  //set app params
+  $redirect  = 'CALLBACK URL';
+  $appid = 'APP ID';
+  $appsecret = 'APP SECRET';
+  $clientrequest = 'https://api.instagram.com/oauth/authorize/?client_id=' . $appid . '&redirect_uri=' . $redirect . '&response_type=code';
+  drupal_goto($clientrequest);
+}
+
+
+//page callback
+function instagram_importer_menu() {
+  $items['habitatmi/instagram-import'] = array(
+    'page callback' => 'instagram_import',
+    'access arguments' => array('access content'),
+    'type' => MENU_CALLBACK,
+    
+  );
+  return $items;
+}
+
+//page callback to run the importer
+function instagram_import() {
+  $code = $_GET['code'];
+  $token = instagram_access_token($code);
+  $user_to_import = 'INSTAGRAM USER ID'
+  $json = drupal_http_request('https://api.instagram.com/v1/users/' . $user_to_import . '/media/recent?access_token=' . $token);
+  $php = drupal_json_decode($json->data, TRUE);
+  $posts = array();
+  foreach($php['data'] as $post){
+    $id = $post['id'];
+    $posts[$id]['id'] = $post['id'];
+    $posts[$id]['url'] = $post['images']['standard_resolution']['url'];
+    $posts[$id]['title'] = $post['caption']['text'];
+    $posts[$id]['created'] = $post['created_time'];
+  };
+    
+  instagram_import_create_node($posts);
+
+}
+
+
+//create the photo nodes
+
+function instagram_import_create_node($thepost){
+  
+  foreach($thepost as $data){ 
+    $type = 'photo';
+    $gallery_id = 'PHOTO GALLERY NODE ID';
+    
+    //set a default title if empty
+    if(empty($data['title'])){
+      $title = $data['id'];
+    } else {
+      $title = $data['title'];
+    };
+    $check = instagram_find_dupes($title, $type);
+    
+    //returning TRUE means it's a duplicate
+    if($check !== TRUE){
+      $file = system_retrieve_file($data['url'], NULL, TRUE, FILE_EXISTS_RENAME);
+      $node = new stdClass();
+      $node->title = $title;
+      $node->type = $type;
+      node_object_prepare($node); // Sets some defaults. Invokes hook_prepare() and hook_node_prepare().
+      $node->date = format_date($data['created'], 'custom', 'r');
+      $node->language = LANGUAGE_NONE; // Or e.g. 'en' if locale is enabled
+      $node->uid = 1; 
+      $node->status = 1; //(1 or 0): published or not
+      $node->promote = 0; //(1 or 0): promoted to front page
+      $node->comment = 0; //2 = comments on, 1 = comments off
+      $node->field_gallery[$node->language][0]['target_id'] = $gallery_id;
+      $node->field_primary_image[$node->language][0]['fid'] = $file->fid;
+      $node = node_submit($node); // Prepare node for saving
+      node_save($node);
+    }
+  }
+  drupal_goto('user');
+
+}
+
+//generate access token
+//http://robotjamie.com/instagram-api-01
+function instagram_access_token($code){
+  //set app params
+  $redirect  = 'APP CALLBACK URL';
+  $appid = 'APPID';
+  $appsecret = 'APPSECRET';
+  $url = "https://api.instagram.com/oauth/access_token";
+  
+  $access_token_parameters = array(
+  	'client_id'		=>     $appid,
+  	'client_secret'		=>     $appsecret,
+  	'grant_type'		=>     'authorization_code',
+  	'redirect_uri'		=>     $redirect,
+  	'code'			=>     $code,
+  );
+  $curl = curl_init($url);
+  curl_setopt($curl,CURLOPT_POST,true);
+  curl_setopt($curl,CURLOPT_POSTFIELDS,$access_token_parameters);
+  curl_setopt($curl, CURLOPT_RETURNTRANSFER, 1);
+  $result = curl_exec($curl);
+  $phpresult = json_decode($result);
+  return $phpresult->access_token;
+}
+
+
+//dont create dupe photo nodes
+//check for dupe titles
+function instagram_find_dupes($title, $node_type) {
+  $query = db_select('node', 'n');
+  $query->condition('n.title', $title, '=')
+        ->condition('n.type', $node_type, '=');
+  $query->fields('n', array('nid'));
+  $result = $query->execute();
+  foreach ($result as $data) {
+    if($data->nid){
+      return TRUE;
+    }
+  }
+}
